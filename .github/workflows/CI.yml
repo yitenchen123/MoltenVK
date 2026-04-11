@@ -116,12 +116,29 @@ jobs:
           rm -rf Package/Release/MoltenVKShaderConverter
           tar -C Package -s/Release/MoltenVK/ -cvf "MoltenVK-${ARTIFACT_TYPE}.tar" Release/
 
-      - name: Upload Artifacts
-        if: success() && matrix.upload_artifacts == true
+      # --- 新增步骤：提取并上传独立的 libMoltenVK.dylib (仅 iOS 平台) ---
+      - name: Extract libMoltenVK.dylib for iOS
+        if: success() && matrix.upload_artifacts == true && matrix.platform == 'ios'
+        run: |
+          # 1. 定位动态库文件
+          DYNAMIC_LIB="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK"
+          
+          # 2. 检查文件是否存在，避免构建失败
+          if [ ! -f "${DYNAMIC_LIB}" ]; then
+            echo "Error: Dynamic library not found at ${DYNAMIC_LIB}"
+            exit 1
+          fi
+
+          # 3. 创建临时目录并复制并重命名
+          mkdir -p dylib-artifact
+          cp "${DYNAMIC_LIB}" dylib-artifact/libMoltenVK.dylib
+
+      - name: Upload libMoltenVK.dylib
+        if: success() && matrix.upload_artifacts == true && matrix.platform == 'ios'
         uses: actions/upload-artifact@v4
         with:
-          name: "MoltenVK-${{ env.ARTIFACT_TYPE }}"
-          path: "MoltenVK-${{ env.ARTIFACT_TYPE }}.tar"
+          name: "libMoltenVK.dylib"
+          path: "dylib-artifact/libMoltenVK.dylib"
 
   build_cmake:
     strategy:
