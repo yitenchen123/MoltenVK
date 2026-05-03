@@ -36,11 +36,11 @@ jobs:
             upload_artifacts: false
             select_xcode: true
             private_api: false
-          # iOS dynamic library build (fat dylib)
+          # iOS dynamic library build (fat dylib) – 使用 Xcode 直编，不依赖 make iosfatdylib
           - os: "macos-latest"
-            platform: "ios"                   # fetchDependencies still uses 'ios'
-            build_target: "iosfatdylib"       # actual make target for dynamic lib
-            artifact_suffix: "-dynamic"       # suffix to distinguish artifact name
+            platform: "ios"                   # 仍然用 ios 拉取依赖
+            build_target: "iosfatdylib"       # 自定义标识，在 Build 步骤中走动态库分支
+            artifact_suffix: "-dynamic"       # 产物名：MoltenVK-ios-dynamic.tar
             upload_artifacts: true
             select_xcode: false
             private_api: false
@@ -107,9 +107,41 @@ jobs:
 
       - name: Build MoltenVK
         run: |
-          if [ -n "${{ matrix.build_target }}" ]; then
-            make ${{ matrix.build_target }}
+          if [ "${{ matrix.build_target }}" = "iosfatdylib" ]; then
+            # ----- iOS 动态库专用构建流程 -----
+            SCHEME="MoltenVK Package (iOS only)"
+
+            # 1. 真机 arm64 动态库
+            xcodebuild -project MoltenVKPackaging.xcodeproj \
+              -scheme "${SCHEME}" \
+              -sdk iphoneos \
+              -configuration Release \
+              -derivedDataPath build/device \
+              MACH_O_TYPE=mh_dylib \
+              -quiet clean build
+
+            # 2. 模拟器 arm64 动态库
+            xcodebuild -project MoltenVKPackaging.xcodeproj \
+              -scheme "${SCHEME}" \
+              -sdk iphonesimulator \
+              -configuration Release \
+              -derivedDataPath build/simulator \
+              MACH_O_TYPE=mh_dylib \
+              -quiet clean build
+
+            # 3. 准备输出目录
+            mkdir -p Package/Release/MoltenVK/dynamic/dylib/iOS
+
+            # 4. 查找产物
+            DEVICE_DYLIB=$(find build/device -name "libMoltenVK.dylib" | head -1)
+            SIM_DYLIB=$(find build/simulator -name "libMoltenVK.dylib" | head -1)
+
+            # 5. 合并为胖二进制（同时支持真机+模拟器）
+            lipo -create "$DEVICE_DYLIB" "$SIM_DYLIB" \
+              -output Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib
+
           else
+            # 其余平台仍然用 make
             make ${BUILD_ARGUMENTS}
           fi
 
