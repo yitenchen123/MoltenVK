@@ -2,47 +2,39 @@ XC_PROJ := MoltenVKPackaging.xcodeproj
 XC_SCHEME := MoltenVK Package
 
 XCODEBUILD := set -o pipefail && $(shell command -v xcodebuild)
-# Used to determine if xcpretty is available
 XCPRETTY_PATH := $(shell command -v xcpretty 2> /dev/null)
 
 OUTPUT_FMT_CMD =
 ifdef XCPRETTY_PATH
-	# Pipe output to xcpretty, while preserving full log as xcodebuild.log
 	OUTPUT_FMT_CMD = | tee "xcodebuild.log" | xcpretty -c
 else
-	# Use xcodebuild -quiet parameter
 	OUTPUT_FMT_CMD = -quiet
 endif
 
-# Collect all build settings defined on the command-line (eg: MVK_HIDE_VULKAN_SYMBOLS=1, MVK_CONFIG_LOG_LEVEL=3...)
 MAKEARGS := $(strip \
   $(foreach v,$(.VARIABLES),\
     $(if $(filter command\ line,$(origin $(v))),\
       $(v)=$(value $(v)) ,)))
 
-# Specify individually (not as dependencies) so the sub-targets don't run in parallel
-# maccat is currently excluded from `all` because of unresolved build issues on Mac Catalyst platform.
 .PHONY: all
 all:
 	@$(MAKE) macos
 	@$(MAKE) ios
 	@$(MAKE) iossim
-#	@$(MAKE) maccat
 	@$(MAKE) tvos
 	@$(MAKE) tvossim
-	@$(MAKE) visionos       # Requires Xcode 15+
-	@$(MAKE) visionossim    # Requires Xcode 15+
+	@$(MAKE) visionos
+	@$(MAKE) visionossim
 
 .PHONY: all-debug
 all-debug:
 	@$(MAKE) macos-debug
 	@$(MAKE) ios-debug
 	@$(MAKE) iossim-debug
-#	@$(MAKE) maccat-debug
 	@$(MAKE) tvos-debug
 	@$(MAKE) tvossim-debug
-	@$(MAKE) visionos-debug       # Requires Xcode 15+
-	@$(MAKE) visionossim-debug    # Requires Xcode 15+
+	@$(MAKE) visionos-debug
+	@$(MAKE) visionossim-debug
 
 .PHONY: macos
 macos:
@@ -114,25 +106,29 @@ clean:
 	rm -rf Package
 
 # ---- iOS 动态库 (fat dylib) 智能构建 ----
-# 先保证真机动态库一定生成，模拟器可选。模拟器构建失败会自动跳过，不会导致整个任务失败。
 .PHONY: iosfatdylib
 iosfatdylib:
 	@echo "==== 构建 iOS 真机静态库 ===="
 	@$(MAKE) ios
 	@echo "==== 准备输出目录 ===="
 	@mkdir -p Package/Release/MoltenVK/dynamic/dylib/iOS
-	@echo "==== 定位真机静态库 ===="
-	@DEVICE_LIB=$$(find Package/Release/MoltenVK/static -name MoltenVK -path "*/iphoneos/*" | head -1); \
+	@echo "==== 搜索真机静态库 ===="
+	@DEVICE_LIB=$$(find Package -type f -name "MoltenVK" | grep -i "iphoneos" | head -1); \
 	if [ -z "$$DEVICE_LIB" ]; then \
-		echo "错误：找不到真机静态库"; exit 1; \
+		DEVICE_LIB=$$(find Package -type f \( -name "MoltenVK" -o -name "libMoltenVK.a" \) | grep -iE "release.*iphoneos|iphoneos.*release" | head -1); \
+	fi; \
+	if [ -z "$$DEVICE_LIB" ]; then \
+		echo "错误：找不到真机静态库，当前 Package 目录结构如下："; \
+		find Package -type f \( -name "MoltenVK" -o -name "*.a" \) | head -20; \
+		exit 1; \
 	fi; \
 	echo "真机静态库: $$DEVICE_LIB"; \
 	\
-	echo "==== 尝试构建模拟器静态库（如失败则仅生成真机动态库）===="; \
+	echo "==== 尝试构建模拟器静态库（如失败则将只生成真机动态库）===="; \
 	$(MAKE) iossim 2>/dev/null; \
-	SIM_LIB=$$(find Package/Release/MoltenVK/static -name MoltenVK -path "*/iphonesimulator/*" | head -1); \
+	SIM_LIB=$$(find Package -type f -name "MoltenVK" | grep -i "iphonesimulator" | head -1); \
 	if [ -n "$$SIM_LIB" ]; then \
-		echo "模拟器静态库存在，开始生成 fat 动态库"; \
+		echo "模拟器静态库: $$SIM_LIB，生成 fat 动态库"; \
 		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
 			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
 			$$DEVICE_LIB \
@@ -152,7 +148,7 @@ iosfatdylib:
 		rm Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
 		   Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib; \
 	else \
-		echo "模拟器静态库构建失败（可忽略），仅生成真机动态库"; \
+		echo "模拟器静态库构建失败或未找到，仅生成真机动态库"; \
 		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
 			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib \
 			$$DEVICE_LIB \
