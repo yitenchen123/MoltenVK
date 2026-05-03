@@ -36,10 +36,10 @@ jobs:
             upload_artifacts: false
             select_xcode: true
             private_api: false
-          # iOS dynamic library build (fat dylib) – 使用 Xcode 直编，不依赖 make iosfatdylib
+          # iOS dynamic library build (fat dylib)
           - os: "macos-latest"
-            platform: "ios"                   # 仍然用 ios 拉取依赖
-            build_target: "iosfatdylib"       # 自定义标识，在 Build 步骤中走动态库分支
+            platform: "ios"                   # 依赖获取仍用 ios
+            build_target: "iosfatdylib"       # 构建分支标识
             artifact_suffix: "-dynamic"       # 产物名：MoltenVK-ios-dynamic.tar
             upload_artifacts: true
             select_xcode: false
@@ -111,13 +111,14 @@ jobs:
             # ----- iOS 动态库专用构建流程 -----
             SCHEME="MoltenVK Package (iOS only)"
 
-            # 1. 真机 arm64 动态库
+            # 1. 真机 arm64 动态库 (链接 IOSurface 框架修复符号缺少问题)
             xcodebuild -project MoltenVKPackaging.xcodeproj \
               -scheme "${SCHEME}" \
               -sdk iphoneos \
               -configuration Release \
               -derivedDataPath build/device \
               MACH_O_TYPE=mh_dylib \
+              OTHER_LDFLAGS="-framework IOSurface" \
               -quiet clean build
 
             # 2. 模拟器 arm64 动态库
@@ -127,6 +128,7 @@ jobs:
               -configuration Release \
               -derivedDataPath build/simulator \
               MACH_O_TYPE=mh_dylib \
+              OTHER_LDFLAGS="-framework IOSurface" \
               -quiet clean build
 
             # 3. 准备输出目录
