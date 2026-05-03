@@ -36,10 +36,10 @@ jobs:
             upload_artifacts: false
             select_xcode: true
             private_api: false
-          # iOS 动态库构建：先 make ios 获得完整静态库，再手动重链为 dylib
+          # iOS dynamic library build (fat dylib) – 直接调用 make iosfatdylib
           - os: "macos-latest"
             platform: "ios"                   # 依赖获取仍用 ios
-            build_target: "iosfatdylib"       # 分支标识
+            build_target: "iosfatdylib"       # make 目标
             artifact_suffix: "-dynamic"       # 产物名：MoltenVK-ios-dynamic.tar
             upload_artifacts: true
             select_xcode: false
@@ -108,51 +108,8 @@ jobs:
       - name: Build MoltenVK
         run: |
           if [ "${{ matrix.build_target }}" = "iosfatdylib" ]; then
-            # ----- iOS 动态库构建：先 make ios 得到完整静态库，再转成 dylib -----
-            # 1. 用 make 构建完整的 iOS 静态框架（包含真机和模拟器）
-            make ios iossim
-
-            # 2. 定位真机与模拟器的静态库文件
-            DEVICE_STATIC_LIB=$(find Package/Release/MoltenVK/static -name "MoltenVK" -path "*/iphoneos/*" | head -1)
-            SIM_STATIC_LIB=$(find Package/Release/MoltenVK/static -name "MoltenVK" -path "*/iphonesimulator/*" | head -1)
-
-            if [ -z "$DEVICE_STATIC_LIB" ] || [ -z "$SIM_STATIC_LIB" ]; then
-              echo "找不到静态库文件，请检查 Package/Release/MoltenVK/static 目录"
-              exit 1
-            fi
-
-            # 3. 准备输出目录
-            mkdir -p Package/Release/MoltenVK/dynamic/dylib/iOS
-
-            # 4. 需要的系统框架（一次性列全，避免缺符号）
-            SYS_FRAMEWORKS="-framework IOSurface -framework CoreGraphics -framework UIKit -framework Metal -framework QuartzCore -framework Foundation"
-
-            # 5. 将真机静态库链接为动态库
-            xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
-              -o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-              "$DEVICE_STATIC_LIB" \
-              ${SYS_FRAMEWORKS} \
-              -fobjc-arc -fobjc-link-runtime
-
-            # 6. 将模拟器静态库链接为动态库（模拟器可能包含 arm64 和 x86_64，我们只取 arm64）
-            xcrun --sdk iphonesimulator clang++ -dynamiclib -arch arm64 \
-              -o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib \
-              "$SIM_STATIC_LIB" \
-              ${SYS_FRAMEWORKS} \
-              -fobjc-arc -fobjc-link-runtime
-
-            # 7. 合并为胖 dylib（同时支持真机 + 模拟器 arm64）
-            lipo -create \
-              Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-              Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib \
-              -output Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib
-
-            # 清理临时单架构文件
-            rm Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-               Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib
-
+            make iosfatdylib
           else
-            # 其余平台仍然用 make
             make ${BUILD_ARGUMENTS}
           fi
 
