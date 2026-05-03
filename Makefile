@@ -105,30 +105,27 @@ clean:
 	$(XCODEBUILD) clean -project "$(XC_PROJ)" -scheme "$(XC_SCHEME) (macOS only)" -destination "generic/platform=macOS" $(OUTPUT_FMT_CMD)
 	rm -rf Package
 
-# ---- iOS 动态库 (fat dylib) 智能构建 ----
+# ---- iOS 动态库 (fat dylib) 构建 ----
+# 使用 make ios 先构建真机静态库，再将其转换成 dylib
+# 若模拟器构建成功，则合并为胖二进制
 .PHONY: iosfatdylib
 iosfatdylib:
 	@echo "==== 构建 iOS 真机静态库 ===="
 	@$(MAKE) ios
 	@echo "==== 准备输出目录 ===="
 	@mkdir -p Package/Release/MoltenVK/dynamic/dylib/iOS
-	@echo "==== 搜索真机静态库 ===="
-	@DEVICE_LIB=$$(find Package -type f -name "MoltenVK" | grep -i "iphoneos" | head -1); \
-	if [ -z "$$DEVICE_LIB" ]; then \
-		DEVICE_LIB=$$(find Package -type f \( -name "MoltenVK" -o -name "libMoltenVK.a" \) | grep -iE "release.*iphoneos|iphoneos.*release" | head -1); \
-	fi; \
-	if [ -z "$$DEVICE_LIB" ]; then \
-		echo "错误：找不到真机静态库，当前 Package 目录结构如下："; \
-		find Package -type f \( -name "MoltenVK" -o -name "*.a" \) | head -20; \
-		exit 1; \
+	@echo "==== 定位真机静态库 ===="
+	@DEVICE_LIB=Package/Release/MoltenVK/static/MoltenVK.xcframework/ios-arm64/libMoltenVK.a; \
+	if [ ! -f "$$DEVICE_LIB" ]; then \
+		echo "错误：真机静态库不存在：$$DEVICE_LIB"; exit 1; \
 	fi; \
 	echo "真机静态库: $$DEVICE_LIB"; \
 	\
-	echo "==== 尝试构建模拟器静态库（如失败则将只生成真机动态库）===="; \
+	echo "==== 尝试构建模拟器静态库 ===="; \
 	$(MAKE) iossim 2>/dev/null; \
-	SIM_LIB=$$(find Package -type f -name "MoltenVK" | grep -i "iphonesimulator" | head -1); \
-	if [ -n "$$SIM_LIB" ]; then \
-		echo "模拟器静态库: $$SIM_LIB，生成 fat 动态库"; \
+	SIM_LIB=Package/Release/MoltenVK/static/MoltenVK.xcframework/ios-simulator-arm64/libMoltenVK.a; \
+	if [ -f "$$SIM_LIB" ]; then \
+		echo "模拟器静态库: $$SIM_LIB，将生成 fat 动态库"; \
 		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
 			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
 			$$DEVICE_LIB \
@@ -148,7 +145,7 @@ iosfatdylib:
 		rm Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
 		   Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib; \
 	else \
-		echo "模拟器静态库构建失败或未找到，仅生成真机动态库"; \
+		echo "模拟器静态库不存在，仅生成真机动态库"; \
 		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
 			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib \
 			$$DEVICE_LIB \
