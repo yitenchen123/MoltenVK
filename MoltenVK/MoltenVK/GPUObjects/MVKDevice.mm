@@ -1839,16 +1839,12 @@ void MVKPhysicalDevice::getExternalFenceProperties(const VkPhysicalDeviceExterna
 	pExternalFenceProperties->pNext = next;
 }
 
-static const VkExternalSemaphoreProperties _extSemProps = {
-	VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
-	nullptr, 0, 0,
-	VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT
-};
+static const VkExternalSemaphoreProperties _emptyExtSemProps = {VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES, nullptr, 0, 0, 0};
 
 void MVKPhysicalDevice::getExternalSemaphoreProperties(const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo,
 													   VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
 	void* next = pExternalSemaphoreProperties->pNext;
-	*pExternalSemaphoreProperties = _extSemProps;
+	*pExternalSemaphoreProperties = _emptyExtSemProps;
 	pExternalSemaphoreProperties->pNext = next;
 }
 
@@ -2468,6 +2464,7 @@ void MVKPhysicalDevice::initMetalFeatures() {
 
 	if (supportsMTLGPUFamily(Mac2)) {
 		_metalFeatures.mtlBufferAlignment = 256;
+		_metalFeatures.mtlConstantBufferAlignment = 32;
 		_metalFeatures.mtlCopyBufferAlignment = 4;
 		_metalFeatures.maxPerStageTextureCount = 128;
 		_metalFeatures.maxTextureDimension = (16 * KIBI);
@@ -2499,6 +2496,7 @@ void MVKPhysicalDevice::initMetalFeatures() {
 
     if (supportsMTLGPUFamily(Apple1)) {
 		_metalFeatures.mtlBufferAlignment = 64;
+		_metalFeatures.mtlConstantBufferAlignment = 4;
 		_metalFeatures.mtlCopyBufferAlignment = 1;
 		_metalFeatures.maxPerStageTextureCount = 31;
 		_metalFeatures.maxTextureDimension = (8 * KIBI);
@@ -2577,6 +2575,7 @@ void MVKPhysicalDevice::initMetalFeatures() {
 // iOS, tvOS and visionOS adjustments necessary when running on the simulator.
 #if MVK_OS_SIMULATOR
 	_metalFeatures.mtlBufferAlignment = 256;	// Even on Apple Silicon
+	_metalFeatures.mtlConstantBufferAlignment = 256;
 	_metalFeatures.renderLinearTextures = false;
 #endif
 
@@ -3913,23 +3912,19 @@ void MVKDevice::getDescriptorVariableDescriptorCountLayoutSupport(const VkDescri
 		if (bindIdx == varBindingIdx) {
 			requestedCount = std::max(pBind->descriptorCount, 1u);
 		} else {
-			auto& mtlFeats = _physicalDevice->_metalFeatures;
 			switch (pBind->descriptorType) {
 				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
 				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
 				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
 				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
 					mtlBuffCnt += pBind->descriptorCount;
-					maxVarDescCount = mtlFeats.maxPerStageBufferCount - mtlBuffCnt;
 					break;
 				case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
-					maxVarDescCount = (uint32_t)min<VkDeviceSize>(mtlFeats.maxMTLBufferSize, numeric_limits<uint32_t>::max());
 					break;
 				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
 				case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
 				case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
 					mtlTexCnt += pBind->descriptorCount;
-					maxVarDescCount = mtlFeats.maxPerStageTextureCount - mtlTexCnt;
 					break;
 				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
 				case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
@@ -3937,25 +3932,51 @@ void MVKDevice::getDescriptorVariableDescriptorCountLayoutSupport(const VkDescri
 					if (_physicalDevice->_metalFeatures.nativeTextureAtomics) {
 						mtlBuffCnt += pBind->descriptorCount;
 					}
-					maxVarDescCount = min(mtlFeats.maxPerStageTextureCount - mtlTexCnt,
-										  mtlFeats.maxPerStageBufferCount - mtlBuffCnt);
 					break;
 				case VK_DESCRIPTOR_TYPE_SAMPLER:
 					mtlSampCnt += pBind->descriptorCount;
-					maxVarDescCount = mtlFeats.maxPerStageSamplerCount - mtlSampCnt;
 					break;
 				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
 					mtlTexCnt += pBind->descriptorCount;
 					mtlSampCnt += pBind->descriptorCount;
-					maxVarDescCount = min(mtlFeats.maxPerStageTextureCount - mtlTexCnt,
-										  mtlFeats.maxPerStageSamplerCount - mtlSampCnt);
 					break;
 				default:
 					break;
 			}
 		}
 	}
-
+	auto& mtlFeats = _physicalDevice->_metalFeatures;
+	switch (pCreateInfo->pBindings[varBindingIdx].descriptorType) {
+		case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+		case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+		case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+		case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+			maxVarDescCount = mtlFeats.maxPerStageBufferCount - mtlBuffCnt;
+			break;
+		case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
+			maxVarDescCount = (uint32_t)min<VkDeviceSize>(mtlFeats.maxMTLBufferSize, numeric_limits<uint32_t>::max());
+			break;
+		case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+		case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+		case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+			maxVarDescCount = mtlFeats.maxPerStageTextureCount - mtlTexCnt;
+			break;
+		case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+		case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+				maxVarDescCount = min(mtlFeats.maxPerStageTextureCount - mtlTexCnt,
+						    		  mtlFeats.maxPerStageBufferCount - mtlBuffCnt);
+			break;
+		case VK_DESCRIPTOR_TYPE_SAMPLER:
+				maxVarDescCount = mtlFeats.maxPerStageSamplerCount - mtlSampCnt;
+			break;
+		case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+				maxVarDescCount = min(mtlFeats.maxPerStageTextureCount - mtlTexCnt,
+						    		  mtlFeats.maxPerStageSamplerCount - mtlSampCnt);
+			break;
+		default:
+			break;
+	}
+	
 	// If there is enough room for the requested size, indicate the amount available,
 	// otherwise indicate that the requested size cannot be supported.
 	if (requestedCount <= maxVarDescCount) {
