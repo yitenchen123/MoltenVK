@@ -2,39 +2,47 @@ XC_PROJ := MoltenVKPackaging.xcodeproj
 XC_SCHEME := MoltenVK Package
 
 XCODEBUILD := set -o pipefail && $(shell command -v xcodebuild)
+# Used to determine if xcpretty is available
 XCPRETTY_PATH := $(shell command -v xcpretty 2> /dev/null)
 
 OUTPUT_FMT_CMD =
 ifdef XCPRETTY_PATH
+	# Pipe output to xcpretty, while preserving full log as xcodebuild.log
 	OUTPUT_FMT_CMD = | tee "xcodebuild.log" | xcpretty -c
 else
+	# Use xcodebuild -quiet parameter
 	OUTPUT_FMT_CMD = -quiet
 endif
 
+# Collect all build settings defined on the command-line (eg: MVK_HIDE_VULKAN_SYMBOLS=1, MVK_CONFIG_LOG_LEVEL=3...)
 MAKEARGS := $(strip \
   $(foreach v,$(.VARIABLES),\
     $(if $(filter command\ line,$(origin $(v))),\
       $(v)=$(value $(v)) ,)))
 
+# Specify individually (not as dependencies) so the sub-targets don't run in parallel
+# maccat is currently excluded from `all` because of unresolved build issues on Mac Catalyst platform.
 .PHONY: all
 all:
 	@$(MAKE) macos
 	@$(MAKE) ios
 	@$(MAKE) iossim
+#	@$(MAKE) maccat
 	@$(MAKE) tvos
 	@$(MAKE) tvossim
-	@$(MAKE) visionos
-	@$(MAKE) visionossim
+	@$(MAKE) visionos       # Requires Xcode 15+
+	@$(MAKE) visionossim    # Requires Xcode 15+
 
 .PHONY: all-debug
 all-debug:
 	@$(MAKE) macos-debug
 	@$(MAKE) ios-debug
 	@$(MAKE) iossim-debug
+#	@$(MAKE) maccat-debug
 	@$(MAKE) tvos-debug
 	@$(MAKE) tvossim-debug
-	@$(MAKE) visionos-debug
-	@$(MAKE) visionossim-debug
+	@$(MAKE) visionos-debug       # Requires Xcode 15+
+	@$(MAKE) visionossim-debug    # Requires Xcode 15+
 
 .PHONY: macos
 macos:
@@ -105,11 +113,12 @@ clean:
 	$(XCODEBUILD) clean -project "$(XC_PROJ)" -scheme "$(XC_SCHEME) (macOS only)" -destination "generic/platform=macOS" $(OUTPUT_FMT_CMD)
 	rm -rf Package
 
-# ---- iOS 动态库 (fat dylib) 构建 ----
-# 使用 make ios 先构建真机静态库，再将其转换成 dylib
-# 若模拟器构建成功，则合并为胖二进制
+# ---- iOS 动态库 (fat dylib) 构建，强制加载整个静态库 ----
 .PHONY: iosfatdylib
 iosfatdylib:
+	@echo "==== 清理旧构建缓存 ===="
+	@rm -rf ~/Library/Developer/Xcode/DerivedData/MoltenVK-*
+	@rm -rf Package
 	@echo "==== 构建 iOS 真机静态库 ===="
 	@$(MAKE) ios
 	@echo "==== 准备输出目录 ===="
@@ -121,39 +130,15 @@ iosfatdylib:
 	fi; \
 	echo "真机静态库: $$DEVICE_LIB"; \
 	\
-	echo "==== 尝试构建模拟器静态库 ===="; \
-	$(MAKE) iossim 2>/dev/null; \
-	SIM_LIB=Package/Release/MoltenVK/static/MoltenVK.xcframework/ios-simulator-arm64/libMoltenVK.a; \
-	if [ -f "$$SIM_LIB" ]; then \
-		echo "模拟器静态库: $$SIM_LIB，将生成 fat 动态库"; \
-		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
-			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-			$$DEVICE_LIB \
-			-framework IOSurface -framework CoreGraphics -framework UIKit \
-			-framework Metal -framework QuartzCore -framework Foundation \
-			-fobjc-arc -fobjc-link-runtime; \
-		xcrun --sdk iphonesimulator clang++ -dynamiclib -arch arm64 \
-			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib \
-			$$SIM_LIB \
-			-framework IOSurface -framework CoreGraphics -framework UIKit \
-			-framework Metal -framework QuartzCore -framework Foundation \
-			-fobjc-arc -fobjc-link-runtime; \
-		lipo -create \
-			Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-			Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib \
-			-output Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib; \
-		rm Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-device.dylib \
-		   Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK-sim.dylib; \
-	else \
-		echo "模拟器静态库不存在，仅生成真机动态库"; \
-		xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
-			-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib \
-			$$DEVICE_LIB \
-			-framework IOSurface -framework CoreGraphics -framework UIKit \
-			-framework Metal -framework QuartzCore -framework Foundation \
-			-fobjc-arc -fobjc-link-runtime; \
-	fi; \
-	echo "==== iOS 动态库构建完成 ===="
+	echo "==== 生成真机动态库 (force_load) ===="; \
+	xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 \
+		-o Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib \
+		-Wl,-force_load,$$DEVICE_LIB \
+		-framework IOSurface -framework CoreGraphics -framework UIKit \
+		-framework Metal -framework QuartzCore -framework Foundation \
+		-fobjc-arc -fobjc-link-runtime; \
+	\
+	echo "==== iOS 动态库构建完成，大小: $$(stat -f%z Package/Release/MoltenVK/dynamic/dylib/iOS/libMoltenVK.dylib) 字节 ===="
 
 # Usually requires 'sudo make install'
 .PHONY: install
