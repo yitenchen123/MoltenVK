@@ -36,7 +36,9 @@ jobs:
       - name: Collect libMoltenVK.dylib
         run: |
           set -e
-          XF="Package/Release/MoltenVK.xcframework"
+          echo "== Package 结构 =="
+          find Package -maxdepth 4 -type d | head -30
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
           echo "== xcframework 结构 =="
           find "$XF" -maxdepth 3 | head -40
           mkdir -p dist
@@ -53,7 +55,7 @@ jobs:
             fi
           done
 
-          find Package/Release -name "*icd*.json" -exec cp {} dist/ \; 2>/dev/null || true
+          find Package -name "*icd*.json" -exec cp {} dist/ \; 2>/dev/null || true
           cp -R "$XF" dist/ 2>/dev/null || true
 
           echo "== dist 内容 =="
