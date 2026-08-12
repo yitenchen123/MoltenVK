@@ -97,12 +97,23 @@ jobs:
         if: success()
         run: |
           set -e
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
+          echo "== xcframework 结构 =="
+          find "$XF" -maxdepth 3 | head -30
           mkdir -p dist
-          for f in $(find Build/iossim -name "libMoltenVK.dylib" 2>/dev/null); do
-            mkdir -p dist/simulator
-            cp "$f" "dist/simulator/libMoltenVK.dylib"
-            install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/simulator/libMoltenVK.dylib"
-            echo "archs: $(lipo -archs "$f")"
+          for dir in "$XF"/*/; do
+            plat=$(basename "$dir")
+            case "$plat" in
+              *simulator*|*Simulator*)
+                bin="$dir/MoltenVK.framework/MoltenVK"
+                if [ -f "$bin" ]; then
+                  mkdir -p "dist/$plat"
+                  cp "$bin" "dist/$plat/libMoltenVK.dylib"
+                  install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+                  echo "== $plat: $(file "$bin" | sed 's/.*: //')  archs: $(lipo -archs "$bin")"
+                fi
+                ;;
+            esac
           done
           find dist -type f | sort
 
