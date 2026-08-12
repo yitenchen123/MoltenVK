@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ios-dylib:
+  build-ios-device:
+    name: iOS 真机 dylib (arm64)
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -19,16 +20,17 @@ jobs:
           xcodebuild -version
 
       - name: Fetch dependencies
-        run: |
-          ./fetchDependencies --ios
+        run: ./fetchDependencies --ios
 
       - name: Build iOS device dylib
         run: make ios
 
-      - name: Build iOS simulator dylib
-        run: make iossim
+      - name: Output build log on failure
+        if: failure()
+        run: |
+          [ -f xcodebuild.log ] && tail -100 xcodebuild.log || true
 
-      - name: Collect libMoltenVK.dylib from xcframework
+      - name: Collect libMoltenVK.dylib
         run: |
           set -e
           XF="Package/Release/MoltenVK.xcframework"
@@ -36,24 +38,19 @@ jobs:
           find "$XF" -maxdepth 3 | head -40
           mkdir -p dist
 
-          # 提取每个平台 slice 中的动态库，重命名为 libMoltenVK.dylib
           for dir in "$XF"/*/; do
             plat=$(basename "$dir")
             bin="$dir/MoltenVK.framework/MoltenVK"
             if [ -f "$bin" ]; then
-              archs=$(lipo -archs "$bin")
               echo "== $plat: $(file "$bin" | sed 's/.*: //')"
               mkdir -p "dist/$plat"
               cp "$bin" "dist/$plat/libMoltenVK.dylib"
               install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
-              echo "archs: $archs"
+              echo "archs: $(lipo -archs "$bin")"
             fi
           done
 
-          # 附带 icd json
           find Package/Release -name "*icd*.json" -exec cp {} dist/ \; 2>/dev/null || true
-
-          # 完整保留 xcframework 与 framework
           cp -R "$XF" dist/ 2>/dev/null || true
 
           echo "== dist 内容 =="
@@ -63,5 +60,52 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: moltenvk-ios-dylib
+          path: dist/
+          if-no-files-found: error
+
+  build-ios-simulator:
+    name: iOS 模拟器 dylib
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch dependencies
+        run: ./fetchDependencies --ios
+
+      - name: Build iOS simulator dylib
+        run: |
+          set -o pipefail
+          xcodebuild build -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath Build/iossim 2>&1 | tee iossim-build.log
+
+      - name: Output build log on failure
+        if: failure()
+        run: |
+          grep -iE 'error|warning|failed|ld:' iossim-build.log | head -60
+
+      - name: Collect libMoltenVK.dylib
+        if: success()
+        run: |
+          set -e
+          mkdir -p dist
+          for f in $(find Build/iossim -name "libMoltenVK.dylib" 2>/dev/null); do
+            mkdir -p dist/simulator
+            cp "$f" "dist/simulator/libMoltenVK.dylib"
+            install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/simulator/libMoltenVK.dylib"
+            echo "archs: $(lipo -archs "$f")"
+          done
+          find dist -type f | sort
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moltenvk-ios-simulator-dylib
           path: dist/
           if-no-files-found: error
