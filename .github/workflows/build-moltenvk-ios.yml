@@ -79,7 +79,7 @@ jobs:
           fetch-depth: 1
 
       - name: Fetch dependencies
-        run: ./fetchDependencies --ios
+        run: ./fetchDependencies --iossim
 
       - name: Build iOS simulator dylib
         run: |
