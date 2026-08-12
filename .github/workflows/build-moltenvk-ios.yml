@@ -51,6 +51,9 @@ jobs:
               mkdir -p "dist/$plat"
               cp "$bin" "dist/$plat/libMoltenVK.dylib"
               install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+              # iOS 15+ dyld 强制校验内嵌 dylib 签名，未签名会导致 dlopen 失败、Vulkan 不可用
+              codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+              codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
               echo "archs: $(lipo -archs "$bin")"
             fi
           done
@@ -110,6 +113,8 @@ jobs:
                   mkdir -p "dist/$plat"
                   cp "$bin" "dist/$plat/libMoltenVK.dylib"
                   install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+                  codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+                  codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
                   echo "== $plat: $(file "$bin" | sed 's/.*: //')  archs: $(lipo -archs "$bin")"
                 fi
                 ;;
