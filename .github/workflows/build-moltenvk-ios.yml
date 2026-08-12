@@ -23,12 +23,15 @@ jobs:
         run: ./fetchDependencies --ios
 
       - name: Build iOS device dylib
-        run: make ios
+        run: |
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS" 2>&1 | tee ios-build.log
 
       - name: Output build log on failure
         if: failure()
         run: |
-          [ -f xcodebuild.log ] && tail -100 xcodebuild.log || true
+          [ -f ios-build.log ] && tail -200 ios-build.log || true
 
       - name: Collect libMoltenVK.dylib
         run: |
@@ -78,8 +81,7 @@ jobs:
 
       - name: Build iOS simulator dylib
         run: |
-          set -o pipefail
-          xcodebuild build -project MoltenVKPackaging.xcodeproj \
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
             -scheme "MoltenVK Package (iOS only)" \
             -destination "generic/platform=iOS Simulator" \
             -derivedDataPath Build/iossim 2>&1 | tee iossim-build.log
