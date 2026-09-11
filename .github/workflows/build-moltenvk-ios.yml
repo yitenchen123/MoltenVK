@@ -1,0 +1,131 @@
+name: Build MoltenVK iOS dylib (Vulkan 1.4)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios-device:
+    name: iOS 真机 dylib (arm64)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Fetch dependencies
+        run: ./fetchDependencies --ios
+
+      - name: Build iOS device dylib
+        run: |
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS" 2>&1 | tee ios-build.log
+
+      - name: Output build log on failure
+        if: failure()
+        run: |
+          [ -f ios-build.log ] && tail -200 ios-build.log || true
+
+      - name: Collect libMoltenVK.dylib
+        run: |
+          set -e
+          echo "== Package 结构 =="
+          find Package -maxdepth 4 -type d | head -30
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
+          echo "== xcframework 结构 =="
+          find "$XF" -maxdepth 3 | head -40
+          mkdir -p dist
+
+          for dir in "$XF"/*/; do
+            plat=$(basename "$dir")
+            bin="$dir/MoltenVK.framework/MoltenVK"
+            if [ -f "$bin" ]; then
+              echo "== $plat: $(file "$bin" | sed 's/.*: //')"
+              mkdir -p "dist/$plat"
+              cp "$bin" "dist/$plat/libMoltenVK.dylib"
+              install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+              # iOS 15+ dyld 强制校验内嵌 dylib 签名，未签名会导致 dlopen 失败、Vulkan 不可用
+              codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+              codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
+              echo "archs: $(lipo -archs "$bin")"
+            fi
+          done
+
+          find Package -name "*icd*.json" -exec cp {} dist/ \; 2>/dev/null || true
+          cp -R "$XF" dist/ 2>/dev/null || true
+
+          echo "== dist 内容 =="
+          find dist -type f | sort
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: moltenvk-ios-dylib
+          path: dist/
+          if-no-files-found: error
+
+  build-ios-simulator:
+    name: iOS 模拟器 dylib
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch dependencies
+        run: ./fetchDependencies --iossim
+
+      - name: Build iOS simulator dylib
+        run: |
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath Build/iossim 2>&1 | tee iossim-build.log
+
+      - name: Output build log on failure
+        if: failure()
+        run: |
+          grep -iE 'error|warning|failed|ld:' iossim-build.log | head -60
+
+      - name: Collect libMoltenVK.dylib
+        if: success()
+        run: |
+          set -e
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
+          echo "== xcframework 结构 =="
+          find "$XF" -maxdepth 3 | head -30
+          mkdir -p dist
+          for dir in "$XF"/*/; do
+            plat=$(basename "$dir")
+            case "$plat" in
+              *simulator*|*Simulator*)
+                bin="$dir/MoltenVK.framework/MoltenVK"
+                if [ -f "$bin" ]; then
+                  mkdir -p "dist/$plat"
+                  cp "$bin" "dist/$plat/libMoltenVK.dylib"
+                  install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+                  codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+                  codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
+                  echo "== $plat: $(file "$bin" | sed 's/.*: //')  archs: $(lipo -archs "$bin")"
+                fi
+                ;;
+            esac
+          done
+          find dist -type f | sort
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moltenvk-ios-simulator-dylib
+          path: dist/
+          if-no-files-found: error
