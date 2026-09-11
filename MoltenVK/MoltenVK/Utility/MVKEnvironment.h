@@ -273,10 +273,23 @@ void mvkSetConfig(MVKConfiguration& dstMVKConfig, const MVKConfiguration& srcMVK
 
 /**
  * Use MTLHeap when allocating MTLBuffers and MTLTextures.
- * Enabled by default where safe to use MTLHeap on the platform.
+ *
+ * Amethyst (iOS) change: default changed from MVK_CONFIG_USE_MTLHEAP_WHERE_SAFE
+ * to MVK_CONFIG_USE_MTLHEAP_NEVER.
+ *
+ * MoltenVK 1.3.0 turned MTLHeap on by default ("where safe"), which changes how
+ * MTLTextures and MTLBuffers are allocated. With MobileGL's DirectVulkan backend on
+ * iOS this makes block/terrain textures render black, whereas MoltenVK 1.2.9 (which
+ * predates that default change) renders correctly.
+ *
+ * Restoring the 1.2.x-era allocation behaviour fixes the black blocks. This only
+ * affects resource allocation - the advertised Vulkan version (1.4) is unchanged,
+ * so 26.x Vulkan capability is preserved.
+ *
+ * Still overridable at runtime: MVK_CONFIG_USE_MTLHEAP=1 (WHERE_SAFE) or 2 (ALWAYS).
  */
 #ifndef MVK_CONFIG_USE_MTLHEAP
-#  	define MVK_CONFIG_USE_MTLHEAP    MVK_CONFIG_USE_MTLHEAP_WHERE_SAFE
+#  	define MVK_CONFIG_USE_MTLHEAP    MVK_CONFIG_USE_MTLHEAP_NEVER
 #endif
 
 /** The Vulkan API version to advertise. Defaults to MVK_VULKAN_API_VERSION. */
