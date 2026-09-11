@@ -348,5 +348,21 @@ void mvkSetConfig(MVKConfiguration& dstMVKConfig, const MVKConfiguration& srcMVK
  * If setting this helps your application, your application is probably violating the Vulkan spec.
  */
 #ifndef MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES
-#   define MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES 0
+/*
+ * Amethyst/iOS fork: default is ON (upstream default is 0).
+ *
+ * MoltenVK 1.4.1 shipped a new descriptor set/pool implementation that is "less
+ * forgiving of applications that don't properly manage the lifetime of their
+ * descriptors (and bind them after the objects they point to have been
+ * destroyed)" -- see Docs/Whats_New.md, MoltenVK 1.4.1. MobileGL's DirectVulkan
+ * backend triggers exactly that path on iOS:
+ *   - MC 26.2 crashes when entering a world
+ *   - MC 1.21.1 renders blocks as black (descriptors sampled after the
+ *     underlying resource was released)
+ * Treating every resource as PARTIALLY_BOUND restores the tolerant 1.2.x-era
+ * behaviour and fixes both. Cost: live resource tracking is enabled for all
+ * descriptors (extra CPU work on the encode path).
+ * Still overridable at runtime with env var MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES=0.
+ */
+#   define MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES 1
 #endif
