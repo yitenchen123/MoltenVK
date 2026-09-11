@@ -1248,76 +1248,22 @@ MTLComputePipelineDescriptor* MVKGraphicsPipeline::newMTLTessVertexStageDescript
 	return plDesc;
 }
 
-static VkFormat mvkFormatFromOutput(const SPIRVShaderOutput& output) {
-	switch (output.baseType) {
-		case SPIRType::SByte:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R8_SINT;
-				case 2: return VK_FORMAT_R8G8_SINT;
-				case 3: return VK_FORMAT_R8G8B8_SINT;
-				case 4: return VK_FORMAT_R8G8B8A8_SINT;
-			}
-			break;
-		case SPIRType::UByte:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R8_UINT;
-				case 2: return VK_FORMAT_R8G8_UINT;
-				case 3: return VK_FORMAT_R8G8B8_UINT;
-				case 4: return VK_FORMAT_R8G8B8A8_UINT;
-			}
-			break;
+// Returns how wide a stage interface variable is, for matching the interface of an adjoining stage.
+// The width is taken from the base type rather than from a Vulkan format, because a format describes
+// how many bits a color component occupies, and so reports a 16-bit float as a float. An interface
+// variable that the adjoining stage does not access is laid out from this width alone, so reporting
+// too wide a value silently shifts every later variable in the interface.
+static MSLShaderVariableFormat mvkInterfaceFormatFromBaseType(SPIRType::BaseType baseType) {
+	switch (baseType) {
+		case SPIRType::UByte:	return MSL_SHADER_VARIABLE_FORMAT_UINT8;
+		case SPIRType::UShort:	return MSL_SHADER_VARIABLE_FORMAT_UINT16;
 		case SPIRType::Short:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R16_SINT;
-				case 2: return VK_FORMAT_R16G16_SINT;
-				case 3: return VK_FORMAT_R16G16B16_SINT;
-				case 4: return VK_FORMAT_R16G16B16A16_SINT;
-			}
-			break;
-		case SPIRType::UShort:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R16_UINT;
-				case 2: return VK_FORMAT_R16G16_UINT;
-				case 3: return VK_FORMAT_R16G16B16_UINT;
-				case 4: return VK_FORMAT_R16G16B16A16_UINT;
-			}
-			break;
-		case SPIRType::Half:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R16_SFLOAT;
-				case 2: return VK_FORMAT_R16G16_SFLOAT;
-				case 3: return VK_FORMAT_R16G16B16_SFLOAT;
-				case 4: return VK_FORMAT_R16G16B16A16_SFLOAT;
-			}
-			break;
+		case SPIRType::Half:	return MSL_SHADER_VARIABLE_FORMAT_ANY16;
 		case SPIRType::Int:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R32_SINT;
-				case 2: return VK_FORMAT_R32G32_SINT;
-				case 3: return VK_FORMAT_R32G32B32_SINT;
-				case 4: return VK_FORMAT_R32G32B32A32_SINT;
-			}
-			break;
 		case SPIRType::UInt:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R32_UINT;
-				case 2: return VK_FORMAT_R32G32_UINT;
-				case 3: return VK_FORMAT_R32G32B32_UINT;
-				case 4: return VK_FORMAT_R32G32B32A32_UINT;
-			}
-			break;
-		case SPIRType::Float:
-			switch (output.vecWidth) {
-				case 1: return VK_FORMAT_R32_SFLOAT;
-				case 2: return VK_FORMAT_R32G32_SFLOAT;
-				case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-				case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
-			}
-			break;
-		default:
-			break;
+		case SPIRType::Float:	return MSL_SHADER_VARIABLE_FORMAT_ANY32;
+		default:				return MSL_SHADER_VARIABLE_FORMAT_OTHER;
 	}
-	return VK_FORMAT_UNDEFINED;
 }
 
 // Returns a format of the same base type with vector length adjusted to fit size.
@@ -1540,6 +1486,7 @@ bool MVKGraphicsPipeline::addVertexShaderToPipeline(MTLComputePipelineDescriptor
 	addCommonImplicitBuffersToShaderConfig(shaderConfig, implicit);
 	shaderConfig.options.mslOptions.shader_index_buffer_index = implicit[MVKImplicitBuffer::Index];
 	shaderConfig.options.mslOptions.shader_output_buffer_index = implicit[MVKImplicitBuffer::Output];
+	shaderConfig.options.mslOptions.draw_id_buffer_index = implicit[MVKImplicitBuffer::DrawId];
 	shaderConfig.options.mslOptions.capture_output_to_buffer = true;
 	shaderConfig.options.mslOptions.vertex_for_tessellation = true;
 	shaderConfig.options.mslOptions.disable_rasterization = true;
@@ -1991,7 +1938,7 @@ void MVKGraphicsPipeline::addFragmentOutputToPipeline(MTLRenderPipelineDescripto
 					plDesc.logicOperationMVK = mvkMTLLogicOperationFromVkLogicOp(pCreateInfo->pColorBlendState->logicOp);
 				}
 #endif
-            } else if (mtlPixFmt && !supportsBlend) {
+            } else if (mtlPixFmt && !supportsBlend && pCA->blendEnable) {
                 reportWarning(VK_ERROR_FEATURE_NOT_PRESENT, "Blending is enabled for attachment with format %s, which does not support it.", getPixelFormats()->getName(attachFmt));
             }
         }
@@ -2263,30 +2210,7 @@ void MVKGraphicsPipeline::addNextStageInputToShaderConversionConfig(SPIRVToMSLCo
         sosv.vecsize = si.vecWidth;
 		sosv.rate = si.perPatch ? MSL_SHADER_VARIABLE_RATE_PER_PATCH : MSL_SHADER_VARIABLE_RATE_PER_VERTEX;
 
-        switch (getPixelFormats()->getFormatType(mvkFormatFromOutput(si) ) ) {
-            case kMVKFormatColorUInt8:
-                sosv.format = MSL_SHADER_VARIABLE_FORMAT_UINT8;
-                break;
-
-            case kMVKFormatColorUInt16:
-                sosv.format = MSL_SHADER_VARIABLE_FORMAT_UINT16;
-                break;
-
-			case kMVKFormatColorHalf:
-			case kMVKFormatColorInt16:
-				sosv.format = MSL_SHADER_VARIABLE_FORMAT_ANY16;
-				break;
-
-			case kMVKFormatColorFloat:
-			case kMVKFormatColorInt32:
-			case kMVKFormatColorUInt32:
-				sosv.format = MSL_SHADER_VARIABLE_FORMAT_ANY32;
-				break;
-
-            default:
-				sosv.format = MSL_SHADER_VARIABLE_FORMAT_OTHER;
-                break;
-        }
+		sosv.format = mvkInterfaceFormatFromBaseType(si.baseType);
 
         shaderConfig.shaderOutputs.push_back(so);
     }
@@ -2308,30 +2232,7 @@ void MVKGraphicsPipeline::addPrevStageOutputToShaderConversionConfig(SPIRVToMSLC
         sisv.vecsize = so.vecWidth;
 		sisv.rate = so.perPatch ? MSL_SHADER_VARIABLE_RATE_PER_PATCH : MSL_SHADER_VARIABLE_RATE_PER_VERTEX;
 
-        switch (getPixelFormats()->getFormatType(mvkFormatFromOutput(so) ) ) {
-            case kMVKFormatColorUInt8:
-                sisv.format = MSL_SHADER_VARIABLE_FORMAT_UINT8;
-                break;
-
-            case kMVKFormatColorUInt16:
-                sisv.format = MSL_SHADER_VARIABLE_FORMAT_UINT16;
-                break;
-
-			case kMVKFormatColorHalf:
-			case kMVKFormatColorInt16:
-				sisv.format = MSL_SHADER_VARIABLE_FORMAT_ANY16;
-				break;
-
-			case kMVKFormatColorFloat:
-			case kMVKFormatColorInt32:
-			case kMVKFormatColorUInt32:
-				sisv.format = MSL_SHADER_VARIABLE_FORMAT_ANY32;
-				break;
-
-            default:
-				sisv.format = MSL_SHADER_VARIABLE_FORMAT_OTHER;
-                break;
-        }
+		sisv.format = mvkInterfaceFormatFromBaseType(so.baseType);
 
         shaderConfig.shaderInputs.push_back(si);
     }
